@@ -67,6 +67,8 @@ const PROTECTED_API_PATHS = [
   "/api/mcp",
   "/api/translator",
   "/api/tunnel",
+  "/api/system-prompts",
+  "/api/playground",
 ];
 
 // Routes that spawn child processes or read host secrets — restrict to localhost.
