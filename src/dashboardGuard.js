@@ -185,6 +185,7 @@ async function loadSettings() {
 
 async function isAuthenticated(request) {
   if (await hasValidToken(request)) return true;
+  if (await hasValidApiKey(request)) return true;
   const settings = await loadSettings();
   if (settings && settings.requireLogin === false) return true;
   return false;
