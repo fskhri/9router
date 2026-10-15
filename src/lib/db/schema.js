@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -154,6 +154,23 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+    ],
+  },
+  // System prompts for jailbreaking / persona injection per model
+  systemPrompts: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      name: "TEXT NOT NULL",
+      modelPattern: "TEXT NOT NULL", // regex or exact model name, e.g. "mimo" or ".*mimo.*"
+      prompt: "TEXT NOT NULL",
+      isActive: "INTEGER DEFAULT 1",
+      priority: "INTEGER DEFAULT 0", // higher = applied first if multiple match
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_sp_model ON systemPrompts(modelPattern)",
+      "CREATE INDEX IF NOT EXISTS idx_sp_active ON systemPrompts(isActive)",
     ],
   },
 };

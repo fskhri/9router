@@ -99,6 +99,27 @@ export async function handleChat(request, clientRawRequest = null) {
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
+  // System Prompt & Jailbreak Injection (Per Model Pattern)
+  try {
+    const { getSystemPromptForModel } = await import("@/lib/db/repos/systemPromptsRepo");
+    const matchedPrompt = await getSystemPromptForModel(modelStr);
+    if (matchedPrompt && matchedPrompt.prompt) {
+      if (Array.isArray(body.messages)) {
+        if (body.messages[0]?.role === "system") {
+          body.messages[0].content = matchedPrompt.prompt + "\n\n" + body.messages[0].content;
+        } else {
+          body.messages.unshift({
+            role: "system",
+            content: matchedPrompt.prompt,
+          });
+        }
+        log.info("CHAT", `[Jailbreak/Prompt] Injected persona "${matchedPrompt.name}" into request for model "${modelStr}"`);
+      }
+    }
+  } catch (err) {
+    log.warn("CHAT", `Failed to inject system prompt: ${err.message}`);
+  }
+
   const requiredCapabilities = detectRequiredCapabilities(body);
 
   // Check if model is a combo (has multiple models with fallback)
