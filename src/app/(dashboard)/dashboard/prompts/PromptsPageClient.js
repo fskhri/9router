@@ -54,11 +54,11 @@ export default function PromptsPageClient() {
   async function fetchModels() {
     try {
       const res = await fetch("/api/v1/models");
-      const data = await res.json();
-      const modelList = data.data?.map((m) => m.id) || [];
-      setModels(modelList);
-      if (modelList.length > 0 && !selectedModel) {
-        setSelectedModel(modelList[0]);
+      if (res.ok) {
+        const data = await res.json();
+        const modelList = data.data?.map((m) => m.id) || [];
+        setModels(modelList);
+        setSelectedModel((prev) => prev || (modelList.length > 0 ? modelList[0] : ""));
       }
     } catch (e) {
       console.error("Failed to fetch models", e);
@@ -146,10 +146,17 @@ export default function PromptsPageClient() {
       });
       const data = await res.json();
       
-      if (data.error) {
-        setPlaygroundOutput(`Error: ${data.error}`);
+      if (!res.ok || data.error) {
+        const errorText =
+          typeof data.error === "object"
+            ? (data.error?.message || JSON.stringify(data.error))
+            : (data.error || data.message || `Request failed (${res.status})`);
+        setPlaygroundOutput(`Error: ${errorText}`);
       } else {
-        const text = data.choices?.[0]?.message?.content || JSON.stringify(data);
+        const text =
+          data.choices?.[0]?.message?.content ||
+          data.choices?.[0]?.text ||
+          (typeof data === "string" ? data : JSON.stringify(data, null, 2));
         setPlaygroundOutput(text);
         setInjectedInfo(data._injectedSystemPrompt);
       }
@@ -468,11 +475,21 @@ export default function PromptsPageClient() {
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
                 >
-                  {models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
+                  {!models.includes(selectedModel) && selectedModel ? (
+                    <option value={selectedModel}>{selectedModel}</option>
+                  ) : null}
+                  {models.length === 0 ? (
+                    <option value="" disabled>Loading models...</option>
+                  ) : (
+                    <>
+                      {!selectedModel && <option value="">-- Choose a model ({models.length} available) --</option>}
+                      {models.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </>
+                  )}
                 </select>
                 <button
                   type="button"
