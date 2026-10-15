@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ModelSelectModal } from "@/shared/components";
 
 export default function PromptsPageClient() {
   const [activeTab, setActiveTab] = useState("library"); // "library" | "playground"
   const [prompts, setPrompts] = useState([]);
   const [models, setModels] = useState([]);
+  const [activeProviders, setActiveProviders] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Model selector modal state (Combo-style search)
+  const [showModelSelect, setShowModelSelect] = useState(false);
+  const [selectTarget, setSelectTarget] = useState("form"); // "form" | "playground"
 
   // Form state
   const [editingId, setEditingId] = useState(null);
@@ -25,10 +31,11 @@ export default function PromptsPageClient() {
   const [playgroundLoading, setPlaygroundLoading] = useState(false);
   const [injectedInfo, setInjectedInfo] = useState(null);
 
-  // Fetch prompts and models
+  // Fetch prompts, models, and providers
   useEffect(() => {
     fetchPrompts();
     fetchModels();
+    fetchProviders();
   }, []);
 
   async function fetchPrompts() {
@@ -54,6 +61,18 @@ export default function PromptsPageClient() {
       }
     } catch (e) {
       console.error("Failed to fetch models", e);
+    }
+  }
+
+  async function fetchProviders() {
+    try {
+      const res = await fetch("/api/providers");
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProviders(data.connections || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch providers", e);
     }
   }
 
@@ -133,6 +152,18 @@ export default function PromptsPageClient() {
     }
   }
 
+  const handleModelSelectFromModal = (model) => {
+    const val = model?.value || model?.name || (typeof model === "string" ? model : "");
+    if (val) {
+      if (selectTarget === "form") {
+        setFormData((prev) => ({ ...prev, modelPattern: val }));
+      } else {
+        setSelectedModel(val);
+      }
+    }
+    setShowModelSelect(false);
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       {/* Header */}
@@ -188,16 +219,100 @@ export default function PromptsPageClient() {
                 />
               </div>
 
-              <div>
-                <label className="text-xs text-gray-400">Model Pattern (Regex / Keyword)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. mimo or .*mimo.*"
-                  value={formData.modelPattern}
-                  onChange={(e) => setFormData({ ...formData, modelPattern: e.target.value })}
-                  className="w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-amber-500"
-                />
+              {/* Model Pattern: Search / Dropdown / Combo Picker */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-400">Model Pattern (Regex / Keyword)</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectTarget("form");
+                      setShowModelSelect(true);
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] text-amber-500 hover:text-amber-400 transition-colors font-medium"
+                    title="Open searchable model catalog like in Combo"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">search</span>
+                    <span>Search Catalog</span>
+                  </button>
+                </div>
+
+                <div className="relative flex gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      list="available-models-datalist"
+                      required
+                      placeholder="e.g. mimo or .*mimo.*"
+                      value={formData.modelPattern}
+                      onChange={(e) => setFormData({ ...formData, modelPattern: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-2.5 pr-7 py-2 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
+                    />
+                    <datalist id="available-models-datalist">
+                      {models.map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+
+                    {formData.modelPattern && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, modelPattern: "" })}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                        title="Clear"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">close</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectTarget("form");
+                      setShowModelSelect(true);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-amber-500/50 rounded-lg text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors shrink-0"
+                    title="Search and select model from catalog"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">manage_search</span>
+                    <span>Browse</span>
+                  </button>
+                </div>
+
+                {/* Dropdown Select & Quick Suggestions */}
+                <div className="flex flex-col gap-1.5 pt-0.5">
+                  <select
+                    value={models.includes(formData.modelPattern) ? formData.modelPattern : ""}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setFormData({ ...formData, modelPattern: e.target.value });
+                      }
+                    }}
+                    className="w-full bg-gray-800/80 border border-gray-700/80 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="">-- Quick select from dropdown ({models.length} models) --</option>
+                    {models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] text-gray-500">Presets:</span>
+                    {["mimo", "gpt-4o", "claude-3-5", "deepseek", "gemini"].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, modelPattern: preset })}
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-amber-400 border border-gray-700/60 transition-colors"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -324,18 +439,46 @@ export default function PromptsPageClient() {
             <h2 className="text-lg font-semibold text-white">Test Single Model</h2>
             
             <div>
-              <label className="text-xs text-gray-400">Target Model</label>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-amber-500"
-              >
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs text-gray-400">Target Model</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectTarget("playground");
+                    setShowModelSelect(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] text-amber-500 hover:text-amber-400 transition-colors font-medium"
+                >
+                  <span className="material-symbols-outlined text-[14px]">search</span>
+                  <span>Search Catalog</span>
+                </button>
+              </div>
+
+              <div className="flex gap-1.5 items-center">
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
+                >
+                  {models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectTarget("playground");
+                    setShowModelSelect(true);
+                  }}
+                  className="flex items-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-amber-500/50 rounded-lg text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors shrink-0"
+                  title="Search and select model from catalog"
+                >
+                  <span className="material-symbols-outlined text-[16px]">manage_search</span>
+                  <span>Browse</span>
+                </button>
+              </div>
             </div>
 
             <div>
@@ -378,6 +521,19 @@ export default function PromptsPageClient() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Shared ModelSelectModal (Same as Combo) */}
+      {showModelSelect && (
+        <ModelSelectModal
+          isOpen={showModelSelect}
+          onClose={() => setShowModelSelect(false)}
+          onSelect={handleModelSelectFromModal}
+          selectedModel={selectTarget === "form" ? formData.modelPattern : selectedModel}
+          activeProviders={activeProviders}
+          title={selectTarget === "form" ? "Select Model for Persona" : "Select Target Model"}
+          closeOnSelect={true}
+        />
       )}
     </div>
   );
