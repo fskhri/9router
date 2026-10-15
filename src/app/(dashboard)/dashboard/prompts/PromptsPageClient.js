@@ -8,6 +8,7 @@ export default function PromptsPageClient() {
   const [prompts, setPrompts] = useState([]);
   const [models, setModels] = useState([]);
   const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
   const [loading, setLoading] = useState(true);
 
   // Model selector modal state (Combo-style search)
@@ -66,13 +67,20 @@ export default function PromptsPageClient() {
 
   async function fetchProviders() {
     try {
-      const res = await fetch("/api/providers");
-      if (res.ok) {
-        const data = await res.json();
+      const [provRes, aliasRes] = await Promise.all([
+        fetch("/api/providers"),
+        fetch("/api/models/alias"),
+      ]);
+      if (provRes.ok) {
+        const data = await provRes.json();
         setActiveProviders(data.connections || []);
       }
+      if (aliasRes.ok) {
+        const aliasData = await aliasRes.json();
+        setModelAliases(aliasData.aliases || {});
+      }
     } catch (e) {
-      console.error("Failed to fetch providers", e);
+      console.error("Failed to fetch providers/aliases", e);
     }
   }
 
@@ -531,7 +539,15 @@ export default function PromptsPageClient() {
           onSelect={handleModelSelectFromModal}
           selectedModel={selectTarget === "form" ? formData.modelPattern : selectedModel}
           activeProviders={activeProviders}
+          modelAliases={modelAliases}
           title={selectTarget === "form" ? "Select Model for Persona" : "Select Target Model"}
+          addedModelValues={
+            selectTarget === "form" && formData.modelPattern
+              ? [formData.modelPattern]
+              : selectTarget === "playground" && selectedModel
+              ? [selectedModel]
+              : []
+          }
           closeOnSelect={true}
         />
       )}
