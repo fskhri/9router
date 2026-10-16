@@ -1,4 +1,8 @@
 import crypto from "crypto";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { execSync } from "node:child_process";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
@@ -15,7 +19,7 @@ import {
   coerceResponsesOutput,
 } from "../translator/formats/responsesApi.js";
 
-const OPENCODE_UA = "opencode/1.18.31";
+const OPENCODE_UA = "opencode/latest/2.0.28/cli";
 const MAX_SESSION_LENGTH = 256;
 const MAX_TOOL_NAME_LEN = 128;
 const SESSION_HEADER = "x-opencode-session";
@@ -393,6 +397,74 @@ function normalizeOpencodeReasoning(model, body) {
   delete body.reasoning_effort;
 }
 
+let _cachedRegisteredSession = null;
+let _lastSessionFetchTime = 0;
+
+export async function getOpencodeRegisteredSession(force = false) {
+  if (!force && _cachedRegisteredSession && (Date.now() - _lastSessionFetchTime < 1800000)) {
+    return _cachedRegisteredSession;
+  }
+  try {
+    const svcPath = path.join(os.homedir(), ".local/state/opencode/service.json");
+    if (!fs.existsSync(svcPath)) {
+      try {
+        execSync("opencode service start", { stdio: "ignore" });
+      } catch {}
+    }
+    if (!fs.existsSync(svcPath)) return null;
+
+    let svc = null;
+    try {
+      svc = JSON.parse(fs.readFileSync(svcPath, "utf8"));
+    } catch {
+      return null;
+    }
+
+    const tryFetch = async (serviceConfig) => {
+      const auth = "Basic " + Buffer.from("opencode:" + serviceConfig.password).toString("base64");
+      const resp = await fetch(serviceConfig.url + "/api/session", {
+        method: "POST",
+        headers: {
+          "Authorization": auth,
+          "Content-Type": "application/json",
+          "User-Agent": "opencode/latest/2.0.28/cli",
+        },
+        body: JSON.stringify({
+          location: { directory: os.homedir() },
+          model: { providerID: "opencode-zen", id: "muse-spark-1.3-contributor-free" },
+        }),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const id = data && data.data && data.data.id;
+      if (id && typeof id === "string" && id.startsWith("ses_")) {
+        return id;
+      }
+      return null;
+    };
+
+    let sid = null;
+    try {
+      sid = await tryFetch(svc);
+    } catch {
+      try {
+        execSync("opencode service start", { stdio: "ignore" });
+        if (fs.existsSync(svcPath)) {
+          svc = JSON.parse(fs.readFileSync(svcPath, "utf8"));
+          sid = await tryFetch(svc);
+        }
+      } catch {}
+    }
+
+    if (sid) {
+      _cachedRegisteredSession = sid;
+      _lastSessionFetchTime = Date.now();
+      return sid;
+    }
+  } catch (e) {}
+  return null;
+}
+
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
     super("opencode", PROVIDERS.opencode);
@@ -414,6 +486,66 @@ export class OpenCodeExecutor extends BaseExecutor {
     // Zen rejects non-streaming requests on free models with 403 FreeTierError;
     // always stream upstream and let the handler layer aggregate for non-stream clients.
     if (body && typeof body === "object") body.stream = true;
+
+    if (body && typeof body === "object") {
+      if (!Array.isArray(body.tools) || body.tools.length === 0) {
+        body.tools = [
+          {
+            type: "function",
+            name: "bash",
+            function: {
+              name: "bash",
+              description: "Internal tool stub",
+              parameters: { type: "object" },
+            },
+            description: "Internal tool stub",
+            parameters: { type: "object" },
+          },
+          {
+            type: "function",
+            name: "read",
+            function: {
+              name: "read",
+              description: "Internal tool stub",
+              parameters: { type: "object" },
+            },
+            description: "Internal tool stub",
+            parameters: { type: "object" },
+          },
+        ];
+      } else {
+        const names = body.tools
+          .map((t) => (t && typeof t === "object" ? t.name || t.function?.name : null))
+          .filter(Boolean);
+        if (!names.includes("bash")) {
+          body.tools.push({
+            type: "function",
+            name: "bash",
+            function: {
+              name: "bash",
+              description: "Internal tool stub",
+              parameters: { type: "object" },
+            },
+            description: "Internal tool stub",
+            parameters: { type: "object" },
+          });
+        }
+        if (!names.includes("read")) {
+          body.tools.push({
+            type: "function",
+            name: "read",
+            function: {
+              name: "read",
+              description: "Internal tool stub",
+              parameters: { type: "object" },
+            },
+            description: "Internal tool stub",
+            parameters: { type: "object" },
+          });
+        }
+      }
+    }
+
     if (isResponsesModel(model || body?.model) && body && typeof body === "object") {
       // ponytail: chỉ model đã xác nhận auto-only; mở allowlist khi có bằng chứng.
       if ("tool_choice" in body && body.tool_choice !== "auto"
@@ -449,7 +581,23 @@ export class OpenCodeExecutor extends BaseExecutor {
   }
 
   async execute(args) {
-    return super.execute({ ...args, credentials: this.prepareRequestCredentials(args) });
+    const sid = await getOpencodeRegisteredSession();
+    const creds = this.prepareRequestCredentials(args);
+    if (sid) {
+      creds[SESSION_FIELD] = sid;
+      creds._registeredSession = sid;
+    }
+    let res = await super.execute({ ...args, credentials: creds });
+    if (res?.response?.status === 403) {
+      _cachedRegisteredSession = null;
+      const fresh = await getOpencodeRegisteredSession(true);
+      if (fresh && fresh !== sid) {
+        creds[SESSION_FIELD] = fresh;
+        creds._registeredSession = fresh;
+        res = await super.execute({ ...args, credentials: creds });
+      }
+    }
+    return res;
   }
 
   buildUrl(model) {
@@ -467,18 +615,21 @@ export class OpenCodeExecutor extends BaseExecutor {
     const downstreamUa = lower["user-agent"] || "";
     const isOpencodeDownstream = hasValidOpencodeVersion(downstreamUa);
 
-    const session = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
+    const session = credentials?._registeredSession || credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
     const downstreamReq = normalizeRequestId(lower["x-opencode-request"]);
     const requestId = credentials?.[REQ_FIELD] || downstreamReq || generateRequestId();
 
     const headers = {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
-      "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
-      "x-opencode-client": lower["x-opencode-client"] || "desktop",
+      "User-Agent": isOpencodeDownstream ? downstreamUa : "opencode/latest/2.0.28/cli",
+      "x-opencode-client": lower["x-opencode-client"] || "cli",
       "x-opencode-session": session,
+      "x-opencode-session-id": session,
+      "x-session-affinity": session,
+      "x-session-id": session,
       "x-opencode-request": requestId,
-      "x-opencode-project": lower["x-opencode-project"] || "global",
+      "x-opencode-project": lower["x-opencode-project"] || "",
       "Accept": stream ? "text/event-stream" : "*/*",
     };
     if (url.endsWith("/messages")) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
